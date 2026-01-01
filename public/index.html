@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DICOM Viewer (WebAssembly)</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background: #f5f5f5;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      padding: 30px;
+    }
+
+    h1 {
+      color: #333;
+      margin-bottom: 10px;
+    }
+
+    .subtitle {
+      color: #666;
+      margin-bottom: 30px;
+      font-size: 14px;
+    }
+
+    .upload-area {
+      border: 2px dashed #ccc;
+      border-radius: 8px;
+      padding: 40px;
+      text-align: center;
+      margin-bottom: 30px;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+
+    .upload-area:hover {
+      border-color: #4CAF50;
+      background: #f9fff9;
+    }
+
+    .upload-area.dragover {
+      border-color: #4CAF50;
+      background: #e8f5e9;
+    }
+
+    input[type="file"] {
+      display: none;
+    }
+
+    .samples {
+      margin-bottom: 30px;
+    }
+
+    .samples h2 {
+      font-size: 18px;
+      margin-bottom: 15px;
+      color: #333;
+    }
+
+    .sample-list {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .sample-btn {
+      padding: 10px 20px;
+      background: #2196F3;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      transition: background 0.3s;
+    }
+
+    .sample-btn:hover {
+      background: #1976D2;
+    }
+
+    .sample-btn:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+
+    .results {
+      margin-top: 30px;
+    }
+
+    .section {
+      margin-bottom: 30px;
+      padding: 20px;
+      background: #f9f9f9;
+      border-radius: 8px;
+    }
+
+    .section h2 {
+      font-size: 18px;
+      margin-bottom: 15px;
+      color: #333;
+      border-bottom: 2px solid #4CAF50;
+      padding-bottom: 10px;
+    }
+
+    .metadata-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 15px;
+    }
+
+    .metadata-item {
+      padding: 10px;
+      background: white;
+      border-radius: 4px;
+      border-left: 3px solid #4CAF50;
+    }
+
+    .metadata-label {
+      font-weight: bold;
+      color: #555;
+      font-size: 12px;
+      text-transform: uppercase;
+      margin-bottom: 5px;
+    }
+
+    .metadata-value {
+      color: #333;
+      font-size: 14px;
+    }
+
+    .dimensions {
+      display: flex;
+      gap: 20px;
+      font-size: 18px;
+    }
+
+    .dimension-item {
+      padding: 15px 25px;
+      background: white;
+      border-radius: 4px;
+      border-left: 3px solid #2196F3;
+    }
+
+    .error {
+      padding: 15px;
+      background: #ffebee;
+      border-left: 4px solid #f44336;
+      border-radius: 4px;
+      color: #c62828;
+      margin-top: 20px;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 20px;
+      color: #666;
+    }
+
+    .spinner {
+      border: 3px solid #f3f3f3;
+      border-top: 3px solid #4CAF50;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 10px;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    .stats {
+      display: flex;
+      gap: 20px;
+      margin-top: 20px;
+    }
+
+    .stat-item {
+      padding: 10px 20px;
+      background: white;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+
+    .stat-label {
+      color: #666;
+      font-size: 12px;
+    }
+
+    .stat-value {
+      font-weight: bold;
+      color: #333;
+      font-size: 16px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>DICOM Viewer</h1>
+    <p class="subtitle">WebAssembly + TypeScript による DICOM メタデータ抽出</p>
+
+    <div class="samples">
+      <h2>サンプルファイル</h2>
+      <div class="sample-list" id="sampleList">
+        <div class="loading">読み込み中...</div>
+      </div>
+    </div>
+
+    <div class="upload-area" id="uploadArea">
+      <h3>DICOMファイルをドロップ</h3>
+      <p>またはクリックしてファイルを選択</p>
+      <input type="file" id="fileInput" accept=".dcm">
+    </div>
+
+    <div id="results"></div>
+  </div>
+
+  <script>
+    const uploadArea = document.getElementById('uploadArea');
+    const fileInput = document.getElementById('fileInput');
+    const resultsDiv = document.getElementById('results');
+    const sampleListDiv = document.getElementById('sampleList');
+
+    // Load sample files
+    async function loadSamples() {
+      try {
+        const response = await fetch('/api/samples');
+        const data = await response.json();
+        if (data.success && data.samples.length > 0) {
+          sampleListDiv.innerHTML = data.samples.map(sample => `
+            <button class="sample-btn" onclick="loadSample('${sample.name}')">
+              ${sample.name} (${(sample.size / 1024 / 1024).toFixed(2)} MB)
+            </button>
+          `).join('');
+        } else {
+          sampleListDiv.innerHTML = '<p>サンプルファイルがありません</p>';
+        }
+      } catch (error) {
+        sampleListDiv.innerHTML = '<p>サンプルファイルの読み込みに失敗しました</p>';
+      }
+    }
+
+    // Load sample file
+    async function loadSample(filename) {
+      try {
+        showLoading();
+        const response = await fetch(`/api/sample/${filename}`);
+        if (!response.ok) throw new Error('Failed to load sample');
+        const buffer = await response.arrayBuffer();
+        await processDicom(new Uint8Array(buffer));
+      } catch (error) {
+        showError(error.message);
+      }
+    }
+
+    // Upload area click
+    uploadArea.addEventListener('click', () => fileInput.click());
+
+    // Drag and drop
+    uploadArea.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      uploadArea.classList.add('dragover');
+    });
+
+    uploadArea.addEventListener('dragleave', () => {
+      uploadArea.classList.remove('dragover');
+    });
+
+    uploadArea.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      uploadArea.classList.remove('dragover');
+      const file = e.dataTransfer.files[0];
+      if (file) {
+        const buffer = await file.arrayBuffer();
+        await processDicom(new Uint8Array(buffer));
+      }
+    });
+
+    // File input change
+    fileInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        const buffer = await file.arrayBuffer();
+        await processDicom(new Uint8Array(buffer));
+      }
+    });
+
+    // Process DICOM file
+    async function processDicom(buffer) {
+      try {
+        showLoading();
+
+        // Fetch metadata and dimensions
+        const infoResponse = await fetch('/api/dicom/info', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/octet-stream' },
+          body: buffer
+        });
+
+        const infoData = await infoResponse.json();
+        if (!infoData.success) throw new Error(infoData.error);
+
+        // Fetch image
+        const imageResponse = await fetch('/api/dicom/image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/octet-stream' },
+          body: buffer
+        });
+
+        const imageData = await imageResponse.json();
+        if (!imageData.success) throw new Error(imageData.error);
+
+        // Combine results
+        const combinedData = {
+          ...infoData,
+          image: imageData.image
+        };
+
+        showResults(combinedData);
+      } catch (error) {
+        showError(error.message);
+      }
+    }
+
+    // Show loading
+    function showLoading() {
+      resultsDiv.innerHTML = `
+        <div class="loading">
+          <div class="spinner"></div>
+          <p>処理中...</p>
+        </div>
+      `;
+    }
+
+    // Show results
+    function showResults(data) {
+      const { metadata, dimensions, memoryUsed, image } = data;
+
+      resultsDiv.innerHTML = `
+        ${image ? `
+        <div class="section">
+          <h2>画像</h2>
+          <div style="text-align: center; padding: 20px; background: white; border-radius: 8px;">
+            <img src="${image}" alt="DICOM Image" style="max-width: 100%; height: auto; border: 1px solid #ddd;">
+          </div>
+        </div>
+        ` : ''}
+
+        <div class="section">
+          <h2>画像サイズ</h2>
+          <div class="dimensions">
+            <div class="dimension-item">
+              <div class="stat-label">幅</div>
+              <div class="stat-value">${dimensions.width} px</div>
+            </div>
+            <div class="dimension-item">
+              <div class="stat-label">高さ</div>
+              <div class="stat-value">${dimensions.height} px</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section">
+          <h2>メタデータ</h2>
+          <div class="metadata-grid">
+            ${Object.entries(metadata).map(([key, value]) => `
+              <div class="metadata-item">
+                <div class="metadata-label">${key}</div>
+                <div class="metadata-value">${value}</div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+
+        <div class="section">
+          <h2>統計情報</h2>
+          <div class="stats">
+            <div class="stat-item">
+              <div class="stat-label">使用メモリ</div>
+              <div class="stat-value">${(memoryUsed / 1024).toFixed(2)} KB</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-label">ピクセル数</div>
+              <div class="stat-value">${(dimensions.width * dimensions.height).toLocaleString()}</div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // Show error
+    function showError(message) {
+      resultsDiv.innerHTML = `
+        <div class="error">
+          <strong>エラー:</strong> ${message}
+        </div>
+      `;
+    }
+
+    // Load samples on page load
+    loadSamples();
+  </script>
+</body>
+</html>
